@@ -27,6 +27,10 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include <string.h>
 #include <stdio.h>
 
+#if defined(_MSC_VER)
+  #include <intrin.h>
+#endif
+
 
 /* Generic macros and helpers */
 
@@ -65,12 +69,6 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
   }                                               \
 } while(0)
 
-#if defined(xIs64Bit)
-#define PRISz PRIu64
-#else
-#define PRISz PRIu32
-#endif
-
 
 /* Wang hash */
 
@@ -103,96 +101,82 @@ inline uint64_t wang_hash64(uint64_t x)
 
 inline int firstbithigh(size_t x)
 {
-#if defined(xIs64Bit)
-  #if defined(_M_X64)
-    unsigned long index;
-    return _BitScanReverse64(&index, x) ? index : -1;
+  #if defined(_MSC_VER)
+    #if defined(xIs64Bit)
+      unsigned long index;
+      return _BitScanReverse64(&index, x) ? index : -1;
+    #else
+      unsigned long index;
+      return _BitScanReverse(&index, x) ? index : -1;
+    #endif
+  #elif defined(__clang__)
+    static const uint32_t kRevCount = sizeof(size_t) * 8;
+    #if defined(oIs64Bit)
+      return (x ? (kRevCount - __builtin_clzll(x)) : 0) - 1;
+    #else
+      return (x ? (kRevCount - __builtin_clzl (x)) : 0) - 1;
+    #endif
   #else
-    uint32_t hi   = uint32_t(x >> 32);
-    uint32_t lo   = uint32_t(x & 0xffffffff);
-    int32_t index = firstbithigh(hi);
-    return index == -1 ? firstbithigh(lo) : (index + 32);
+    #error unsupported compiler
   #endif
-#else
-  unsigned long index;
-  return _BitScanReverse(&index, x) ? index : -1;
-#endif
 }
 
 inline int firstbitlow(size_t x)
 {
-#if defined(xIs64Bit)
-  #ifdef _M_X64
-    unsigned long index;
-    return _BitScanForward64(&index, x) ? index : -1;
+  #if defined(_MSC_VER)
+    #if defined(xIs64Bit)
+      unsigned long index;
+      return _BitScanForward64(&index, x) ? index : -1;
+    #else
+      unsigned long index;
+      return _BitScanForward(&index, x) ? index : -1;
+    #endif
+  #elif defined(__clang__)
+    #if defined(oIs64Bit)
+      return x ? __builtin_ctzll(x) : -1;
+    #else
+      return x ? __builtin_ctzl (x) : -1;
+    #endif
   #else
-    uint32_t hi   = (uint32_t)(x >> 32);
-    uint32_t lo   = (uint32_t)(x & 0xffffffff);
-    int32_t index = firstbitlow(lo);
-    index         = index == -1 ? firstbitlow(hi) : index;
-    return index == -1 ? -1 : (index + 32);
+    #error unsupported compiler
   #endif
-#else
-  unsigned long index;
-  return _BitScanForward(&index, x) ? index : -1;
-#endif
 }
 
-inline unsigned long long log2ull(unsigned long long x)
+
+/* Power of 2 utilities */
+
+inline int log2u(size_t x)
 {
-#if defined(xIs64Bit) && defined(_M_X64)
-  unsigned long index;
-  return _BitScanReverse64(&index, x) ? index : (uint32_t)-1;
-#else
-  x |= (x >> 1);
-  x |= (x >> 2);
-  x |= (x >> 4);
-  x |= (x >> 8);
-  x |= (x >> 16);
-  x |= (x >> 32);
-  x >>= 1;
-  x -= (x >> 1) & 0x5555555555555555ull;
-  x = ((x >> 2) & 0x3333333333333333ull) + (x & 0x3333333333333333ull);
-  x = ((x >> 4) + x) & 0x0f0f0f0f0f0f0f0full;
-  x += (x >> 8);
-  x += (x >> 16);
-  x += (x >> 32);
-  return (unsigned long)x & 0x3f;
-#endif
+  return firstbithigh(x|1);
 }
 
-inline unsigned long ulnextpow2(unsigned long x)
+inline int ispow2(size_t x)
 {
-  #define oNProt32_(x, shift) ((x)|(x)>>(shift))
-  unsigned long y = oNProt32_(oNProt32_(oNProt32_(oNProt32_(oNProt32_(x - 1, 1), 2), 4), 8), 16);
-  return 1 + y;
-  #undef oNProt32_
+  return x && !(x & (x - 1));
 }
 
-inline unsigned long long ullnextpow2(unsigned long long x)
+inline size_t nextpow2(size_t x)
 {
-  #define oNProt64_(x, shift) (((unsigned long long)(x))|(((unsigned long long)(x)))>>(UINT64_C(shift)))
-  unsigned long long y = oNProt64_(oNProt64_(oNProt64_(oNProt64_(oNProt64_(x - 1, 1), 2), 4), 8), 16);
-  return 1 + oNProt64_(y, 32);
-  #undef oNProt64_
+  #if defined(xIs64Bit)
+    #define xNProt64_(x, shift) (((uint64_t)(x))|(((uint64_t)(x)))>>(UINT64_C(shift)))
+      uint64_t y = xNProt64_(xNProt64_(xNProt64_(xNProt64_(xNProt64_(x - 1, 1), 2), 4), 8), 16);
+      return 1 + xNProt64_(y, 32);
+    #undef xNProt64_
+  #else
+    #define xNProt32_(x, shift) ((x)|(x)>>(shift))
+      uint32_t y = xNProt32_(xNProt32_(xNProt32_(xNProt32_(xNProt32_(x - 1, 1), 2), 4), 8), 16);
+      return 1 + y;
+    #undef xNProt32_
+  #endif
 }
 
-size_t nextpow2(size_t x)
-{
-#if defined(xIs64Bit)
-  return ullnextpow2(x);
-#else
-  return ulnextpow2(x);
-#endif
-}
 
+/* General-purpose fixed-sized object pool. */
 
-/* General-Purpose fixed-sized object pool. */
-
-typedef struct pool* pool_t;
+typedef struct pool__* pool_t;
 typedef void (*pool_walk_fn)(void* user, int32_t available_index);
 
-struct pool
+struct pool__
 {
   uint32_t block_size : 24; /* Each allocation is of this size. */
   uint32_t align_log2 : 8;  /* First-block alignment; blocks thereafter are naturally, not explicitly aligned. */
@@ -201,9 +185,18 @@ struct pool
   int32_t  freelist;        /* Index to the next free block. */
 };
 
+size_t pool_calc_capacity(size_t bytes, size_t block_align, size_t block_size)
+{
+  size_t overhead = xAlignUp(sizeof(struct pool__), block_align);
+  if (bytes < overhead)
+    return 0;
+
+  return (bytes - overhead) / block_size;
+}
+
 size_t pool_required_bytes(size_t capacity, size_t block_align, size_t block_size)
 {
-  return xAlignUp(sizeof(struct pool), block_align) + capacity * block_size;
+  return xAlignUp(sizeof(struct pool__), block_align) + capacity * block_size;
 }
 
 static char* pool_base(const pool_t pool)
@@ -268,11 +261,13 @@ size_t pool_used(const pool_t pool)
   return pool->used;
 }
 
-pool_t pool_init(void* mem, size_t capacity, size_t block_align, size_t block_size)
+pool_t pool_init(void* mem, size_t bytes, size_t block_align, size_t block_size)
 {
+  const size_t capacity = pool_calc_capacity(bytes, block_align, block_size);
+
   pool_t pool      = (pool_t)mem;
   pool->block_size  = (uint32_t)block_size;
-  pool->align_log2  = (uint32_t)log2ull(block_align);
+  pool->align_log2  = (uint32_t)log2u(block_align);
   pool->capacity    = (uint32_t)capacity;
   pool->used        = 0;
   pool->freelist    = 0;
@@ -308,10 +303,10 @@ void pool_walk_freelist(const pool_t pool, void* user, pool_walk_fn walker)
 
 /* General-purpose linear probe, robin hood, backwards-shift-delete hashmap. */
 
-typedef struct hashmap* hashmap_t;
+typedef struct hashmap__* hashmap_t;
 typedef void (*hashmap_walk_fn)(void* user, uint64_t hash, int32_t value);
 
-struct hashmap
+struct hashmap__
 {
   uint32_t fibshift; /* https://probablydance.com/2018/06/16/fibonacci-hashing-the-optimization-that-the-world-forgot-or-a-better-alternative-to-integer-modulo/ */
   uint32_t wrapmask; /* Replaces modulo of capacity with a mask. */
@@ -336,7 +331,7 @@ static int* hashmap_vals(hashmap_t map)
 
 static uint32_t hashmap_to_slot(const hashmap_t map, uint64_t hash)
 {
-  // fibonacci (multiplicative) hashing
+  /* Fibonacci (multiplicative) hashing. */
   uint64_t h = hash ^ (hash >> map->fibshift);
   return (uint32_t)((11400714819323198485llu * h) >> map->fibshift);
 }
@@ -346,20 +341,37 @@ static uint32_t hashmap_probe_dist(const hashmap_t map, uint64_t hash, uint32_t 
   return (slot - hashmap_to_slot(map, hash)) & map->wrapmask;
 }
 
+size_t hashmap_calc_capacity(size_t bytes)
+{
+  size_t overhead = sizeof(struct hashmap__);
+  if (bytes < overhead)
+    return 0;
+
+  size_t entry_bytes = bytes - overhead;
+  size_t entry_count = entry_bytes / (sizeof(uint64_t) + sizeof(int32_t));
+  
+  if (!ispow2(entry_count))
+  {
+    entry_count = nextpow2(entry_count) >> 1;
+  }
+
+  return entry_count;
+}
+
 size_t hashmap_required_bytes(size_t entry_capacity)
 {
   const size_t nentries = nextpow2(entry_capacity);
-  return sizeof(struct hashmap) + nentries * (sizeof(uint64_t) + sizeof(int));
+  return sizeof(struct hashmap__) + nentries * (sizeof(uint64_t) + sizeof(int));
 }
 
-hashmap_t hashmap_init(void* mem, size_t capacity)
+hashmap_t hashmap_init(void* mem, size_t bytes)
 {
-  const size_t bytes = hashmap_required_bytes(capacity);
+  const size_t capacity = hashmap_calc_capacity(bytes);
   memset(mem, 0, bytes);
 
   hashmap_t map = (hashmap_t)mem;
   map->wrapmask = (uint32_t)capacity - 1;
-  map->fibshift = (uint32_t)((sizeof(uint64_t)*8) - log2ull(capacity));
+  map->fibshift = (uint32_t)((sizeof(uint64_t)*8) - log2u(capacity));
   map->count    = 0;
   map->padA     = 0;
 
@@ -537,8 +549,8 @@ static const size_t kMaxBlockSize = ((size_t)1) << kMaxFLIndex;
 
 
 /* Ensure assumptions hold. */
-static_assert(sizeof(uint32_t) * 8 >= kSLIndexCount, "");
-static_assert(kMinAlignment == kSmallBlockSize / kSLIndexCount, "");
+static_assert((sizeof(uint32_t) * 8) >= kSLIndexCount, "");
+static_assert(kMinAlignment == (kSmallBlockSize / kSLIndexCount), "");
 
 /* Validation macro */
 #define xCheck(expr, fmt, ...) do { if (!(expr)) { nerrors++; xTrace(fmt, ## __VA_ARGS__); } } while(0)
@@ -590,15 +602,18 @@ typedef struct freelist_t
   int32_t  freelists[kFLIndexCount][kSLIndexCount];
 } freelist_t;
 
-
-struct xheap
+struct xheap__
 {
-  freelist_t freelist;
-  pool_t     blocks;
-  hashmap_t  lookup;
-  int32_t    pools;
-  int32_t    padA;
+  freelist_t   freelist;        /* TLSF details for quick freelist location. */
+  pool_t       blocks;          /* Blocks are allocated and deallocated from here. */
+  hashmap_t    lookup;          /* Maps pointer to block index. */
+  int32_t      pools;           /* Head of a list of pools (by index, -1 is terminator). */
+  int32_t      block_highwater; /* Highest count of used blocks. */
+  const char** block_names;     /* Indexed by block_index/pool_block_index */
+  size_t       xheap_bytes;     /* Size of working memory used to initialize the xheap. */
 };
+
+static_assert(xAligned(sizeof(struct xheap__), sizeof(void*)), "No explicit size alignment is done on struct, so ensure it's natural alignment is reasonable.");
 
 
 /* TLSF core algorithm */
@@ -705,6 +720,7 @@ static size_t tlsf_adjust_size(size_t size, size_t align)
 	return aligned;
 }
 
+
 /* Hashing */
 
 static size_t hash_pointer(const void* pointer)
@@ -742,6 +758,11 @@ static int32_t block_to_index(const xheap_t heap, const block_t* block)
 static void* block_to_pointer(const block_t* block)
 {
   return (void*)block->offset;
+}
+
+static const char* block_name(const xheap_t heap, int32_t block_index)
+{
+  return heap->block_names ? heap->block_names[block_index] : "(naming not supported)";
 }
 
 
@@ -815,9 +836,7 @@ static void freelist_insert(xheap_t heap, block_t* block)
 
   *freelist = block_index;
 
-  /* Update freebits. */
-	heap->freelist.fl_bitmap     |= (1 << fl);
-	heap->freelist.sl_bitmap[fl] |= (1 << sl);
+  tlsf_mark_free(heap, fl, sl);
 }
 
 static block_t* freelist_alloc(xheap_t heap, size_t size, int32_t* out_block_index)
@@ -840,6 +859,22 @@ static block_t* freelist_alloc(xheap_t heap, size_t size, int32_t* out_block_ind
 
 /* Block split/merge */
 
+static int32_t block_alloc(xheap_t heap)
+{
+  int32_t block_index = pool_alloc(heap->blocks);
+  heap->block_highwater = xMax(heap->block_highwater, (int32_t)pool_used(heap->blocks));
+  return block_index;
+}
+
+static void block_free(xheap_t heap, int32_t block_index)
+{
+  pool_free(heap->blocks, block_index);
+  if (heap->block_names)
+  {
+    heap->block_names[block_index] = "(unallocated)";
+  }
+}
+
 static int32_t block_can_split(block_t* block, size_t size)
 {
 	return block->size > size;
@@ -847,7 +882,7 @@ static int32_t block_can_split(block_t* block, size_t size)
 
 static block_t* block_split_to_next(xheap_t heap, block_t* block, size_t goal_block_size)
 {
-  int32_t new_next_block_index = pool_alloc(heap->blocks);
+  int32_t new_next_block_index = block_alloc(heap);
   if (new_next_block_index == -1)
     return NULL;
 
@@ -861,7 +896,7 @@ static block_t* block_split_to_next(xheap_t heap, block_t* block, size_t goal_bl
   new_next_block->contiguous_prev = block_to_index(heap, block);
   new_next_block->free_next       = -1;
   new_next_block->free_prev       = -1;
-  new_next_block->is_free         = 1;
+  new_next_block->is_free         = -1;
 
   if (new_next_block->contiguous_next != -1)
   {
@@ -877,7 +912,7 @@ static block_t* block_split_to_next(xheap_t heap, block_t* block, size_t goal_bl
 
 static block_t* block_split_to_prev(xheap_t heap, block_t* block, size_t goal_block_size)
 {
-  int32_t new_prev_block_index = pool_alloc(heap->blocks);
+  int32_t new_prev_block_index = block_alloc(heap);
   if (new_prev_block_index == -1)
     return NULL;
 
@@ -891,7 +926,7 @@ static block_t* block_split_to_prev(xheap_t heap, block_t* block, size_t goal_bl
   new_prev_block->contiguous_prev = block->contiguous_prev;
   new_prev_block->free_next       = -1;
   new_prev_block->free_prev       = -1;
-  new_prev_block->is_free         = 1;
+  new_prev_block->is_free         = -1;
 
   if (new_prev_block->contiguous_prev != -1)
   {
@@ -934,7 +969,7 @@ static void block_merge_prev(xheap_t heap, block_t* block)
   xAssert(prev->free_next == -1, "");
   xAssert(prev->free_prev == -1, "");
 
-  pool_free(heap->blocks, prev_block_index);
+  block_free(heap, prev_block_index);
 }
 
 static void block_merge_next(xheap_t heap, block_t* block)
@@ -964,10 +999,10 @@ static void block_merge_next(xheap_t heap, block_t* block)
   xAssert(next->free_next == -1, "");
   xAssert(next->free_prev == -1, "");
 
-  pool_free(heap->blocks, next_block_index);
+  block_free(heap, next_block_index);
 }
 
-static void* block_finalize_as_used(xheap_t heap, int32_t block_index, block_t* block, size_t size)
+static void* block_finalize_as_used(xheap_t heap, int32_t block_index, block_t* block, size_t size, const char* name)
 {
 	void* pointer = 0;
 	if (block)
@@ -990,12 +1025,23 @@ static void* block_finalize_as_used(xheap_t heap, int32_t block_index, block_t* 
 
     uint64_t hash = hash_pointer(pointer);
     hashmap_set(heap->lookup, hash, block_index);
+
+    if (heap->block_names)
+    {
+      heap->block_names[block_index] = name ? name : "(unnamed block)";
+    }
 	}
 	return pointer;
 }
 
 
-/* Pool */
+/* XHeap Pool */
+
+static pool_block_t* pool_block_from_index(const xheap_t heap, int32_t pool_block_index)
+{
+  pool_block_t* pool_block = (pool_block_t*)pool_to_pointer(heap->blocks, pool_block_index);
+  return pool_block;
+}
 
 static void poollist_remove(xheap_t heap, pool_block_t* pool_block)
 {
@@ -1005,13 +1051,13 @@ static void poollist_remove(xheap_t heap, pool_block_t* pool_block)
   }
   else
   {
-    pool_block_t* prev_pool_block = (pool_block_t*)block_from_index(heap, pool_block->pool_prev);
+    pool_block_t* prev_pool_block = pool_block_from_index(heap, pool_block->pool_prev);
     prev_pool_block->pool_next = pool_block->pool_next;
   }
 
   if (pool_block->pool_next != -1)
   {
-    pool_block_t* next_pool_block = (pool_block_t*)block_from_index(heap, pool_block->pool_next);
+    pool_block_t* next_pool_block = pool_block_from_index(heap, pool_block->pool_next);
     next_pool_block->pool_prev = pool_block->pool_prev;
   }
 }
@@ -1028,20 +1074,50 @@ static int32_t pool_validate(const xheap_t heap, const pool_block_t* pool_block)
     uint64_t hash       = hash_pool(pool);
     int32_t  prev_index = hashmap_get(heap->lookup, hash);
     
-    block_t* prev = pool_to_pointer(heap->blocks, prev_index);
+    block_t* prev = block_from_index(heap, prev_index);
     int32_t block_index = prev->contiguous_next;
     while (block_index != -1)
     {
-      block_t* block = pool_to_pointer(heap->blocks, block_index);
+      block_t* block = block_from_index(heap, block_index);
+      if (block)
+      {
+        xCheck((prev->offset + prev->size) == block->offset, "Blocks %p(%d) and %p(%d) are not contiguous", prev, prev_index, block, block_index);
 
-      xCheck((prev->offset + prev->size) == block->offset, "Blocks %p(%d) and %p(%d) are not contiguous", prev, prev_index, block, block_index);
-
-      prev_index = block_index;
-      prev = block;
-      block_index = block->contiguous_next;
+        prev_index = block_index;
+        prev = block;
+        block_index = block->contiguous_next;
+      }
+      else
+      {
+        nerrors++;
+        block_index = -1;
+      }
     }
   }
+
 	return nerrors;
+}
+
+static pool_block_t* pool_to_pool_block(const xheap_t heap, const xheap_pool_t pool)
+{
+  uint64_t pool_hash        = hash_pool(pool);
+  int32_t  pool_block_index = hashmap_get(heap->lookup, pool_hash);
+  if (pool_block_index == -1)
+    return NULL;
+
+  pool_block_t* pool_block = pool_block_from_index(heap, pool_block_index);
+
+  xAssert(pool_block && pool_block->offset == (const uintptr_t)pool, 
+    "Mismatched pool lookup: pool %p, pool_hash %" PRIu64 ", pool_block_index %d, pool_block %p",
+    pool, pool_hash, pool_block_index, pool_block);
+
+  return pool_block;
+}
+
+static int32_t pool_is_single_block(const xheap_t heap, const pool_block_t* pool_block)
+{
+  const block_t* first_block = block_from_index(heap, pool_block->first_block);
+  return first_block->contiguous_next == pool_block->last_block;
 }
 
 
@@ -1091,7 +1167,7 @@ static int32_t heap_validate_tlsf(const xheap_t heap)
 				tlsf_insert(block->size, &fl, &sl);
 
         xCheck(fl == i && sl == j,
-          "block %p(%d) size (%" PRISz ") indexed in wrong list FL=%d SL=%d",
+          "block %p(%d) size (%zu) indexed in wrong list FL=%d SL=%d",
           block, block_index, block->size, fl, sl);
 
         block_index = block->free_next;
@@ -1106,15 +1182,77 @@ static int32_t heap_validate_tlsf(const xheap_t heap)
 
 /* Public interface */
 
-size_t xheap_required_bytes(size_t max_allocation_count)
+size_t xheap_calc_max_allocation_count(size_t bytes, int allow_naming)
+{
+  /* Hashmap rounds to nextpow2, so this isn't straightforward... */
+
+  size_t xheap_overhead   = xheap_required_bytes(0, allow_naming);
+  size_t hashmap_overhead = hashmap_required_bytes(0);
+
+  size_t working_bytes = bytes - xheap_overhead + hashmap_overhead;
+
+  size_t guess_count = hashmap_calc_capacity(working_bytes);
+  size_t guess_bytes = xheap_required_bytes(guess_count, allow_naming);
+
+  /* Shrink fast at about the rate hashmap does */
+  size_t guess_count_max = 0;
+  while (guess_bytes > bytes)
+  {
+    guess_count_max = guess_count;
+    guess_count = nextpow2(guess_count) >> 1;
+    guess_bytes = xheap_required_bytes(guess_count, allow_naming);
+  }
+
+  /* Binary search for the best fit. */
+  size_t bs_left  = guess_count; /* Lowest so far. */
+  size_t bs_right = guess_count_max; /* Closest that still failed above loop. */
+
+  while (bs_left <= bs_right)
+  {
+    guess_count = (bs_left + bs_right) / 2;
+    guess_bytes = xheap_required_bytes(guess_count, allow_naming);
+
+    if (guess_bytes == bytes)
+    {
+      break;
+    }
+    else if (guess_bytes < bytes)
+    {
+      /* Is this the largest guess that isn't over? */
+      guess_bytes = xheap_required_bytes(guess_count+1, allow_naming);
+      if (guess_bytes > bytes)
+        break;
+
+      bs_left = guess_count + 1;
+    }
+    else
+    {
+      bs_right = guess_count - 1;
+    }
+  }
+
+  if (guess_bytes > bytes)
+    guess_count;
+
+  return guess_count;
+}
+
+size_t xheap_required_bytes(size_t max_allocation_count, int allow_naming)
 {
   size_t pool_bytes   = pool_required_bytes(max_allocation_count, sizeof(void*), sizeof(block_t));
   size_t lookup_bytes = hashmap_required_bytes(max_allocation_count);
-  return xAlignUp(sizeof(struct xheap), sizeof(void*)) + pool_bytes + lookup_bytes;
+  size_t name_bytes   = max_allocation_count * sizeof(const char*);
+  return sizeof(struct xheap__)
+    + pool_bytes 
+    + lookup_bytes
+    + (allow_naming ? name_bytes : 0);
 }
 
-xheap_t xheap_init(void* mem, size_t max_allocation_count)
+xheap_t xheap_init(void* mem, size_t bytes, int allow_naming)
 {
+  if (!mem || bytes < sizeof(struct xheap__))
+    return NULL;
+
   if (!xAligned(mem, kMinAlignment))
 		return NULL;
 
@@ -1122,20 +1260,58 @@ xheap_t xheap_init(void* mem, size_t max_allocation_count)
 
   tlsf_init(&heap->freelist);
 
+  const size_t max_allocation_count = xheap_calc_max_allocation_count(bytes, allow_naming);
+  xAssert(xheap_required_bytes(max_allocation_count, allow_naming) <= bytes, "error calculating max_allocation_count");
+  xAssert(xheap_required_bytes(max_allocation_count+1, allow_naming) > bytes, "inefficient calculation of max_allocation_count");
+
   size_t lookup_bytes = hashmap_required_bytes(max_allocation_count);
+  size_t blocks_bytes = pool_required_bytes   (max_allocation_count, sizeof(void*), sizeof(block_t));
 
   void* lookup_mem = heap + 1;
   void* blocks_mem = (char*)lookup_mem + lookup_bytes;
+  void* naming_mem = (char*)blocks_mem + blocks_bytes;
 
-  heap->lookup = hashmap_init(lookup_mem, max_allocation_count);
-  heap->blocks = pool_init(blocks_mem, max_allocation_count, sizeof(void*), sizeof(block_t));
-  heap->pools  = -1;
-  heap->padA   = 0;
+  xAssert(xAligned(naming_mem, sizeof(const char*)), "misalignment");
+
+  heap->lookup          = hashmap_init(lookup_mem, lookup_bytes);
+  heap->blocks          = pool_init(blocks_mem, blocks_bytes, sizeof(void*), sizeof(block_t));
+  heap->pools           = -1;
+  heap->block_highwater = 0;
+  heap->block_names     = allow_naming ? (const char**)naming_mem : (const char**)NULL;
+  heap->xheap_bytes     = bytes;
+
+  if (heap->block_names)
+  {
+    for (int32_t i = 0; i < max_allocation_count; i++)
+    {
+      heap->block_names[i] = "(unallocated)";
+    }
+  }
 
 	return heap;
 }
 
-xheap_pool_t xheap_add_pool(xheap_t heap, const void* mem, size_t bytes)
+size_t xheap_overhead(const xheap_t heap)
+{
+  return heap ? heap->xheap_bytes : 0;
+}
+
+size_t xheap_allocation_count(const xheap_t heap)
+{
+  return heap ? pool_used(heap->blocks) : 0;
+}
+
+size_t xheap_max_allocation_count(const xheap_t heap)
+{
+  return heap ? pool_capacity(heap->blocks) : 0;
+}
+
+size_t xheap_allocation_highwater(const xheap_t heap)
+{
+  return heap ? heap->block_highwater : 0;
+}
+
+xheap_pool_t xheap_add_pool(xheap_t heap, const void* mem, size_t bytes, const char* name)
 {
   xAssert(xAligned(mem, kMinAlignment), "pools must be %d-byte aligned", kMinAlignment);
 
@@ -1143,31 +1319,30 @@ xheap_pool_t xheap_add_pool(xheap_t heap, const void* mem, size_t bytes)
   size_t       pool_bytes = xAlignDown(bytes, kMinAlignment);
   
   xAssert(pool_bytes >= kMinBlockSize && pool_bytes <= kMaxBlockSize, 
-    "pools must be between %" PRISz " and %" PRISz " bytes", kMinBlockSize, kMaxBlockSize);
+    "pools must be between %zu and %zu bytes", kMinBlockSize, kMaxBlockSize);
 
   /* Allocate blocks: 1 special pool block and begin/end blocks. */
 
-  int32_t pool_block_index = pool_alloc(heap->blocks);
+  int32_t pool_block_index = block_alloc(heap);
   if (pool_block_index)
   {
     return 0;
   }
 
-  int32_t block_index = pool_alloc(heap->blocks);
+  int32_t block_index = block_alloc(heap);
   if (block_index == -1)
   {
-    pool_free(heap->blocks, pool_block_index);
+    block_free(heap, pool_block_index);
     return 0;
   }
 
-  int32_t next_index = pool_alloc(heap->blocks);
+  int32_t next_index = block_alloc(heap);
   if (next_index == -1)
   {
-    pool_free(heap->blocks, block_index);
-    pool_free(heap->blocks, pool_block_index);
+    block_free(heap, block_index);
+    block_free(heap, pool_block_index);
     return 0;
   }
-
 
   /* Initialize the base free block. */
   block_t* block         = block_from_index(heap, block_index);
@@ -1177,7 +1352,7 @@ xheap_pool_t xheap_add_pool(xheap_t heap, const void* mem, size_t bytes)
   block->size            = pool_bytes;
   block->free_prev       = -1;
   block->free_next       = -1;
-	block->is_free         = 1;
+	block->is_free         = -1;
 
 	
   /* Initialize a sentinel block to keep pools non-contiguous. */
@@ -1192,7 +1367,7 @@ xheap_pool_t xheap_add_pool(xheap_t heap, const void* mem, size_t bytes)
 
 
   /* Initialize pool block */
-  pool_block_t* pool_block    = (pool_block_t*)block_from_index(heap, pool_block_index);
+  pool_block_t* pool_block    = pool_block_from_index(heap, pool_block_index);
   pool_block->offset          = (uintptr_t)mem;
   pool_block->size            = pool_bytes;
   pool_block->first_block     = block_index;
@@ -1206,6 +1381,11 @@ xheap_pool_t xheap_add_pool(xheap_t heap, const void* mem, size_t bytes)
 
   uint64_t pool_hash = hash_pool(pool);
   hashmap_set(heap->lookup, pool_hash, pool_block_index);
+
+  if (heap->block_names)
+  {
+    heap->block_names[pool_block_index] = name ? name : "(unnamed pool)";
+  }
 
 
   /* Pool is available as a new free block. */
@@ -1222,7 +1402,7 @@ void* xheap_remove_pool(xheap_t heap, xheap_pool_t pool)
     return 0;
 
   /* Remove from all-pools linked list. */
-  pool_block_t* pool_block = (pool_block_t*)block_from_index(heap, pool_block_index);
+  pool_block_t* pool_block = pool_block_from_index(heap, pool_block_index);
 
   /* Find user blocks and ensure the whole pool is contiguously free. */
   xAssert((uintptr_t)pool == pool_block->offset, "pool to pool block reference is mismatched");
@@ -1241,37 +1421,120 @@ void* xheap_remove_pool(xheap_t heap, xheap_pool_t pool)
     return 0;
 
   xAssert(!next->is_free, "sentinel block should be indicated as used (not-free)");
-  xAssert(block->size == pool_block->size, "pool and pool block sizes mismatch (%" PRISz " != %" PRISz ")", block->size, pool_block->size);
+  xAssert(block->size == pool_block->size, "pool and pool block sizes mismatch (%zu != %zu)", block->size, pool_block->size);
 
   /* Remove all entries. */
   poollist_remove(heap, pool_block);
   freelist_remove(heap, block);
 
-  pool_free(heap->blocks, block_index);
-  pool_free(heap->blocks, next_index);
-  pool_free(heap->blocks, pool_block_index);
+  block_free(heap, block_index);
+  block_free(heap, next_index);
+  block_free(heap, pool_block_index);
 
   return (void*)pool;
 }
 
-int32_t xheap_validate(xheap_t heap)
+size_t xheap_pool_count(const xheap_t heap)
 {
-  int32_t nerrors = heap_validate_tlsf(heap);
+  size_t pool_count = 0;
 
-  int32_t pool_index = heap->pools;
-  while (pool_index != -1)
+  int32_t pool_block_index = heap->pools;
+  while (pool_block_index != -1)
   {
-    pool_block_t* pool_block = (pool_block_t*)block_from_index(heap, pool_index);
+    pool_count++;
 
-    nerrors += pool_validate(heap, pool_block);
-
-    pool_index = pool_block->pool_next;
+    pool_block_t* pool_block = pool_block_from_index(heap, pool_block_index);
+    pool_block_index = pool_block->pool_next;
   }
-
-  return nerrors;
+  
+  return pool_count;
 }
 
-void* xheap_malloc(xheap_t heap, size_t bytes)
+size_t xheap_block_size(const xheap_t heap, const void* pointer)
+{
+  block_t* block = block_from_pointer(heap, pointer);
+  if (!block)
+    return 0;
+  xAssert((uintptr_t)pointer == block->offset, "invalid pointer %p mapping to block %p(%d)", pointer, block, block_to_index(heap, block));
+  return block->size;
+}
+
+size_t xheap_pool_size(const xheap_t heap, const xheap_pool_t pool)
+{
+  pool_block_t* pool_block = pool_to_pool_block(heap, pool);
+  if (!pool_block)
+    return 0;
+
+  return pool_block->size;
+}
+
+const char* xheap_pool_name(const xheap_t heap, const xheap_pool_t pool)
+{
+  const char* name = "(not tracked)";
+  if (heap->block_names)
+  {
+    uint64_t hash = hash_pool(pool);
+    int32_t  pool_block_index = hashmap_get(heap->lookup, hash);
+    if (pool_block_index != -1)
+      name = heap->block_names[pool_block_index];
+  }
+
+  return name;
+}
+
+const char* xheap_block_name(const xheap_t heap, const void* pointer)
+{
+  const char* name = "(not tracked)";
+  if (heap->block_names)
+  {
+    uint64_t hash        = hash_pointer(pointer);
+    int32_t  block_index = hashmap_get(heap->lookup, hash);
+    if (block_index != -1)
+      name = heap->block_names[block_index];
+  }
+
+  return name;
+}
+
+int xheap_owns(const xheap_t heap, const void* pointer)
+{
+  return block_from_pointer(heap, pointer) ? 1 : 0;
+}
+
+int xheap_in_pool_range(const xheap_t heap, const xheap_pool_t pool, const void* pointer)
+{
+  pool_block_t* pool_block = pool_to_pool_block(heap, pool);
+  if (!pool_block)
+    return 0;
+
+  uintptr_t ptr = (uintptr_t)pointer;
+  uintptr_t bgn = (uintptr_t)pool_block->offset;
+  uintptr_t end = (uintptr_t)pool_block->size + bgn;
+
+  return ptr >= bgn && ptr < end;
+}
+
+int xheap_in_range(const xheap_t heap, const void* pointer)
+{
+  int32_t pool_block_index = heap->pools;
+  while (pool_block_index != -1)
+  {
+    pool_block_t* pool_block = pool_block_from_index(heap, pool_block_index);
+
+    uintptr_t ptr = (uintptr_t)pointer;
+    uintptr_t bgn = (uintptr_t)pool_block->offset;
+    uintptr_t end = (uintptr_t)pool_block->size + bgn;
+
+    if (ptr >= bgn && ptr < end)
+      return 1;
+
+    pool_block_index = pool_block->pool_next;
+  }
+
+  return 0;
+}
+
+void* xheap_malloc(xheap_t heap, size_t bytes, const char* name)
 {
 	const size_t adjusted_size = tlsf_adjust_size(bytes, kMinAlignment);
   int32_t block_index = -1;
@@ -1279,11 +1542,11 @@ void* xheap_malloc(xheap_t heap, size_t bytes)
   if (!block)
     return NULL;
 
-	void* pointer = block_finalize_as_used(heap, block_index, block, adjusted_size);
+	void* pointer = block_finalize_as_used(heap, block_index, block, adjusted_size, name);
   return pointer;
 }
 
-void* xheap_memalign(xheap_t heap, size_t align, size_t bytes)
+void* xheap_memalign(xheap_t heap, size_t align, size_t bytes, const char* name)
 {
   const size_t adjusted_size         = tlsf_adjust_size(bytes, kMinAlignment);
   const size_t aligned_adjusted_size = adjusted_size + align;
@@ -1305,11 +1568,11 @@ void* xheap_memalign(xheap_t heap, size_t align, size_t bytes)
       freelist_insert(heap, prev);
   }
 
-  void* pointer = block_finalize_as_used(heap, block_index, block, adjusted_size);
+  void* pointer = block_finalize_as_used(heap, block_index, block, adjusted_size, name);
   return pointer;
 }
 
-void* xheap_realloc(xheap_t heap, void* pointer, size_t size)
+void* xheap_realloc(xheap_t heap, void* pointer, size_t size, const char* name)
 {
 	void* final_pointer = NULL;
 
@@ -1327,7 +1590,7 @@ void* xheap_realloc(xheap_t heap, void* pointer, size_t size)
     */
 		if (adjusted_size > block_size && (!next->is_free || adjusted_size > merge_next_size))
 		{
-			final_pointer = xheap_malloc(heap, size);
+			final_pointer = xheap_malloc(heap, size, name);
 			if (final_pointer)
 			{
 				memcpy(final_pointer, pointer, xMin(block_size, size));
@@ -1354,11 +1617,11 @@ void* xheap_realloc(xheap_t heap, void* pointer, size_t size)
         }
 	    }
 
-			final_pointer = block_finalize_as_used(heap, block_to_index(heap, block), block, adjusted_size);
+			final_pointer = block_finalize_as_used(heap, block_to_index(heap, block), block, adjusted_size, name);
 		}
 	}
 	else if (!pointer)
-		final_pointer = xheap_malloc(heap, size);
+		final_pointer = xheap_malloc(heap, size, name);
 	else
 		xheap_free(heap, pointer);
 
@@ -1371,19 +1634,29 @@ void xheap_free(xheap_t heap, const void* pointer)
     return;
 	block_t* block = block_from_pointer(heap, pointer);
 	xAssert(!block->is_free, "%p maps to block %p that is marked as already free (double-free?).", pointer, block);
-  block->is_free = 1;
+  block->is_free = -1;
   block_merge_prev(heap, block);
   block_merge_next(heap, block);
   freelist_insert(heap, block);
 }
 
-size_t xheap_size(const xheap_t heap, const void* pointer)
+int32_t xheap_validate(const xheap_t heap)
 {
-  block_t* block = block_from_pointer(heap, pointer);
-  if (!block)
-    return 0;
-  xAssert((uintptr_t)pointer == block->offset, "invalid pointer %p mapping to block %p(%d)", pointer, block, block_to_index(heap, block));
-  return block->size;
+  int32_t nerrors = heap_validate_tlsf(heap);
+
+  int32_t pool_block_index = heap->pools;
+  while (pool_block_index != -1)
+  {
+    pool_block_t* pool_block = pool_block_from_index(heap, pool_block_index);
+    if (pool_block)
+      nerrors += pool_validate(heap, pool_block);
+    else
+      nerrors++;
+
+    pool_block_index = pool_block->pool_next;
+  }
+
+  return nerrors;
 }
 
 typedef struct walk_ctx_t
@@ -1397,14 +1670,13 @@ static void default_walker(walk_ctx_t* user, void* pointer, size_t size, int use
   const block_t* block = block_from_pointer(user->heap, pointer);
   int32_t block_index = block_to_index(user->heap, block);
 
-	printf("\t%p %s size: %x (%u, %p)\n", pointer, used ? "used" : "free", (uint32_t)size, block_index, block);
+	xTrace("\t%p %s size: %x (%u, %p)\n", pointer, used ? "used" : "free", (uint32_t)size, block_index, block);
 }
 
 void xheap_walk_pool(const xheap_t heap, xheap_pool_t pool, void* user, xheap_walker walker)
 {
-  uint64_t pool_hash        = hash_pool(pool);
-  int32_t  pool_block_index = hashmap_get(heap->lookup, pool_hash);
-  if (pool_block_index == -1)
+  pool_block_t* pool_block = pool_to_pool_block(heap, pool);
+  if (!pool_block)
     return;
 
   walk_ctx_t default_ctx;
@@ -1416,31 +1688,49 @@ void xheap_walk_pool(const xheap_t heap, xheap_pool_t pool, void* user, xheap_wa
     user = &default_ctx;
   }
 
-  pool_block_t* pool_block  = (pool_block_t*)block_from_index(heap, pool_block_index);
   int32_t       block_index = pool_block->first_block;
   const int32_t last_block  = pool_block->last_block;
 
   while (block_index != last_block)
   {
-    block_t* block = block_from_index(heap, block_index);
+    block_t*    block = block_from_index(heap, block_index);
+    const char* name  = block_name(heap, block_index);
     
-    walker(user, (void*)block->offset, block->size, pool, !block->is_free);
+    walker(user, (void*)block->offset, block->size, name, pool, !block->is_free);
     
     block_index = block->contiguous_next;
   }
 }
 
+void xheap_walk_pools(const xheap_t heap, void* user, xheap_walker walker)
+{
+  int32_t pool_block_index = heap->pools;
+  while (pool_block_index != -1)
+  {
+    pool_block_t* pool_block = pool_block_from_index(heap, pool_block_index);
+    if (pool_block)
+    {
+      const char* name = block_name          (heap, pool_block_index);
+      int         used = pool_is_single_block(heap, pool_block);
+
+      walker(user, (void*)pool_block->offset, pool_block->size, name, (xheap_pool_t)pool_block->offset, used);
+    }
+
+    pool_block_index = pool_block->pool_next;
+  }
+}
+
 void xheap_walk(const xheap_t heap, void* user, xheap_walker walker)
 {
-  int32_t pool_index = heap->pools;
-  while (pool_index != -1)
+  int32_t pool_block_index = heap->pools;
+  while (pool_block_index != -1)
   {
-    pool_block_t* pool_block  = (pool_block_t*)block_from_index(heap, pool_index);
-    const xheap_pool_t pool = (const xheap_pool_t)pool_block->offset;
+    pool_block_t* pool_block = pool_block_from_index(heap, pool_block_index);
+    const xheap_pool_t pool  = (const xheap_pool_t)pool_block->offset;
 
     xheap_walk_pool(heap, pool, user, walker);
 
-    pool_index = pool_block->pool_next;
+    pool_block_index = pool_block->pool_next;
   }
 }
 
@@ -1453,69 +1743,117 @@ int xheap_unittest()
   static const size_t kMaxAllocs = 20;
   static const size_t kPoolSize  = 2 * 1024;
 
-  const size_t bookkeeping_bytes = xheap_required_bytes(kMaxAllocs);
+  if (firstbitlow(12) != 2)
+    return 1;
+
+  if (firstbithigh(12) != 3)
+    return 2;
+
+  if (firstbitlow(0) != -1)
+    return 3;
+
+  if (firstbithigh(0) != -1)
+    return 4;
+
+  if (firstbitlow(1) != 0)
+    return 3;
+
+  if (firstbithigh(1) != 0)
+    return 4;
+
+  #define kHighIndex (sizeof(size_t) * 8 - 1)
+  #define kSomeLowerIndex 15
+  static const size_t kHighBit        = ((size_t)1) << kHighIndex;
+  static const size_t kSomeLowerBit   = ((size_t)1) << kSomeLowerIndex;
+
+  if (firstbitlow(kHighBit|kSomeLowerBit) != kSomeLowerIndex)
+    return 5;
+
+  if (firstbithigh(kHighBit|kSomeLowerBit) != kHighIndex)
+    return 6;
+
+  if (log2u(0) != 0)
+    return 7;
+
+  if (log2u(8) != 3)
+    return 8;
   
+  const int kUseNaming = 1;
+  const size_t bookkeeping_bytes = xheap_required_bytes(kMaxAllocs, kUseNaming);
+
+  size_t max_allocs = xheap_calc_max_allocation_count(bookkeeping_bytes, kUseNaming);
+  if (max_allocs != kMaxAllocs)
+    return -1;
+
   void* bookkeeping_mem = malloc(bookkeeping_bytes);
   void* pool_mem        = malloc(kPoolSize);
 
-  xheap_t heap = xheap_init(bookkeeping_mem, kMaxAllocs);
+  xheap_t heap = xheap_init(bookkeeping_mem, bookkeeping_bytes, kUseNaming);
   if (!heap)
-    return -1;
-
-  xheap_pool_t pool = xheap_add_pool(heap, pool_mem, kPoolSize);
-  if (!pool)
     return -2;
 
-  void* a = xheap_malloc(heap, 1024);
-  if (!a)
+  xheap_pool_t pool = xheap_add_pool(heap, pool_mem, kPoolSize, "testpool");
+  if (!pool)
     return -3;
 
-  void* b = xheap_malloc(heap, 1024);
-  if (!b)
+  const char* testname = xheap_pool_name(heap, pool);
+  if (strcmp(testname, "testpool"))
     return -4;
 
-  if (((char*)b - (char*)a) != 1024)
+  void* a = xheap_malloc(heap, 1024, "1024");
+  if (!a)
     return -5;
 
-  void* should_be_null = xheap_malloc(heap, 1);
-  if (should_be_null != 0)
+  void* b = xheap_malloc(heap, 1024, NULL);
+  if (!b)
     return -6;
+
+  if (((char*)b - (char*)a) != 1024)
+    return -7;
+
+  void* should_be_null = xheap_malloc(heap, 1, "Fail");
+  if (should_be_null != 0)
+    return -8;
 
   xheap_free(heap, a);
 
-  a = xheap_malloc(heap, 512);
+  a = xheap_malloc(heap, 512, "test named alloc");
   if (!a)
-    return -7;
-
-  void* c = xheap_malloc(heap, 512);
-  if (!c)
-    return -8;
-
-  size_t sz = xheap_size(heap, c);
-  if (sz != 512)
     return -9;
+
+  void* c = xheap_malloc(heap, 512, NULL);
+  if (!c)
+    return -10;
+
+  size_t sz = xheap_block_size(heap, c);
+  if (sz != 512)
+    return -11;
+
+  testname = xheap_block_name(heap, a);
+  if (strcmp(testname, "test named alloc"))
+    return -12;
 
   xheap_free(heap, b);
   xheap_free(heap, c);
   xheap_free(heap, a);
 
-  a = xheap_malloc(heap, 2048);
+  a = xheap_malloc(heap, 2048, NULL);
   if (!a)
-    return -10;
-
-  xheap_realloc(heap, a, 0);
-
-  a = xheap_memalign(heap, 64, 13);
-  if (!xAligned(a, 64))
-    return -11;
-
-  b = xheap_memalign(heap, 128, 257);
-  if (!xAligned(a, 128))
-    return -12;
-
-  c = xheap_memalign(heap, 512, 257);
-  if (!xAligned(a, 512))
     return -13;
+
+  xheap_realloc(heap, a, 0, NULL);
+
+  a = xheap_memalign(heap, 64, 13, NULL);
+  if (!xAligned(a, 64))
+    return -14;
+
+  b = xheap_memalign(heap, 128, 257, NULL);
+  if (!xAligned(a, 128))
+    return -15;
+
+  c = xheap_memalign(heap, 512, 257, NULL);
+  if (!xAligned(a, 512))
+    return -16;
 
   xheap_free(heap, c);
   xheap_free(heap, a);
